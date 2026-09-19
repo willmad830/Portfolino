@@ -16,6 +16,7 @@ import RadarChart from "@/components/diagnose/RadarChart";
 import { TiltPanel } from "@/components/diagnose/TiltPanel";
 import OnboardingForm from "@/components/onboarding/OnboardingForm";
 import UniversityComparison from "@/components/compare/UniversityComparison";
+import RoadmapSection from "@/components/roadmap/RoadmapSection";
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -347,6 +348,9 @@ export default function DashboardPage() {
                     studentPayload={currentPayload}
                     totalPts={result.calculated_scores.total_pts}
                   />
+
+                  {/* Roadmap Generator & Target Tracker */}
+                  <RoadmapSection result={result} studentPayload={currentPayload} />
 
                   <div className="mt-12 flex justify-center">
                     <button
