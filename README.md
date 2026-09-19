@@ -1,36 +1,127 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Portfolino - конвертируйте портфолио в 100% Full-Ride грант
 
-## Getting Started
+---
 
-First, run the development server:
+## 1. Название и Краткое Описание Продукта
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+**Команда:** Opar
+**Решаемая задача:** Отсутствие у одаренных старшеклассников с низким семейным бюджетом понятного инструмента для конвертации своих академических и проектных достижений в 100% гранты (Full-Ride) на обучение за рубежом.
+
+**Суть решения:** AI-сервис и авто-стратег, который анализирует портфолио абитуриента через балльную систему (PTS), определяет шансы на получение финансовой помощи, выявляет пробелы и выстраивает пошаговый Roadmap поступления с дедлайнами по стипендиям.
+
+---
+
+## 2. Стек Технологий и Архитектура
+
+### Используемые технологии
+| Слой | Технологии |
+|---|---|
+| Frontend | Next.js 16.3.5 (App Router, `use client`), React 19, TypeScript 5 |
+| Стили | Tailwind CSS 4 |
+| Анимации | Framer Motion 13 |
+| Состояние | Zustand 5 + persist (localStorage) |
+| Backend | Next.js Route Handlers (`app/api/*`) |
+| AI | Google Gemini API (`gemini-3.5-flash-lite`)  |
+| Хранение данных | отсутствует БД - весь пользовательский стейт хранится локально в браузере |
+
+### Схема работы сервиса
+
+```
+Landing → Онбординг-анкета (5 шагов)
+   ↓ (zustand, persisted в localStorage)
+buildDiagnosePayload → POST /api/diagnose         (PTS, Radar, подбор вузов)
+                         POST /api/compare         (матрица сравнения вузов)
+                         POST /api/roadmap         (план поступления)
+   ↓
+Next.js API-роуты → валидация payload → запрос к Gemini 
+   ↓
+Санатизация/нормализация ответа (sanitize-слой)
+   ↓  (при сбое Gemini — детерминированный локальный fallback)
+Диагностика → Сравнение вузов → Roadmap (Dashboard)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ключевая черта - **трёхуровневая отказоустойчивость**: (1) живой ответ Gemini → (2) нормализация в строгий контракт типов → (3) локальный fallback с флагом `_meta.degraded`, поэтому дашборд работает даже при недоступности модели.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 3. Техническая Справка (Technical Reference)
 
-## Learn More
+## 3. Техническая справка (Technical Reference)
 
-To learn more about Next.js, take a look at the following resources:
+### AI-модели и внешние API
+* **LLM Engine:** Google Gemini `gemini-3.5-flash-lite` (вызов через серверные Route Handlers Next.js)[cite: 3].
+* **Протокол:** OpenAI-совместимый REST API (`response_format: json_object`)[cite: 3].
+* **Системные промпты:** 3 изолированных контекста - `/diagnose` (PTS-анализ), `/compare` (сравнение программ), `/roadmap` (пошаговый план)[cite: 3].
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Источники данных и гибридный движок
+* **Архитектурный выбор:** Отказ от тяжелых внешних БД в пользу локального гибридного движка (Rule-Based Templates + LLM Reasoning) на базе стандартов *Common Data Set (CDS)* и исторических данных зачислений[cite: 3, 5, 7].
+* **Маркировка данных:** Все дедлайны и финансовые требования сопровождаются ссылками на первоисточники или пометкой `[Демонстрационные данные]` для исключения недостоверности[cite: 3].
+* **Состояние пользователя:** Хранение в `localStorage` (ключи `portfolino-onboarding-form`, `portfolino-diagnose-history`) без отправки данных на сторонние БД.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Алгоритмы и методы проверки результатов
+* **Шкала PTS (макс. 1000 баллов):**
+  * *GPA:* до 250 PTS (авто-пересчет из шкалы 5.0 в 4.0).
+  * *SAT / ЕНТ:* до 250 PTS.
+  * *IELTS / Языки:* до 150 PTS.
+  * *Honors / Проекты / Портфолио:* до 350 PTS.
+* **Matching вузов:** Категоризация на `fit` (где $PTS_{вуза} \le PTS_{пользователя}$) и `missed` (где разрыв не превышает 200 PTS с автоматическим расчетом дефицита).
+* **Трёхуровневая отказоустойчивость:** 
+  1. Прямой ответ от Gemini API[cite: 3].
+  2. Нормализация ответа под контракты типов (sanitization-слой)[cite: 3].
+  3. Детерминированный локальный fallback при сбое сети/API (гарантирует 100% работу дашборда без зависаний)[cite: 3].
+* **Динамическая реактивность:** Автоматическая сверка текущего JSON анкеты с последним проведенным анализом. При смене GPA, бюджета или достижений выводится уведомление о необходимости пересчета маршрута[cite: 3].
 
-## Deploy on Vercel
+### Меры безопасности
+* **Приватность ключей:** API-ключ Gemini хранится строго в переменной окружения на сервере (`process.env`), клиенту не передается[cite: 3].
+* **Серверная валидация:** Все входящие `payload` проверяются на корректность структуры перед отправкой в LLM[cite: 3].
+* **Изоляция персональных данных:** Отсутствие серверного реестра - персональные данные и история абитуриента остаются исключительно на устройстве пользователя.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 4. Инструкция по Локальному Запуску
+
+```bash
+# 1. Клонирование
+git clone https://github.com/willmad830/portfolino.git
+cd portfolino
+
+# 2. Установка зависимостей
+npm install
+
+# 3. Настройка .env (скопировать из примера)
+cp .env.example .env.local
+#   GEMINI_API_KEY=ваш_ключ_от_Google_AI_Studio
+#   GEMINI_MODEL=gemini-3.5-flash-lite   # опционально, значение по умолчанию
+
+# 4. Запуск dev-сервера
+npm run dev
+```
+
+Откройте [http://localhost:3000](http://localhost:3000).
+
+Доступные скрипты: `npm run dev` · `npm run build` · `npm run start` · `npm run lint` (ESLint).
+
+---
+
+## 5. Пошаговый Тестовый Сценарий для Жюри
+
+**Развёрнутый сайт:** `https://portfolino.vercel.app`
+
+### Проход по 7 этапам UX (от анкеты до Roadmap)
+
+1. **Лендинг:** Откройте сайт и нажмите кнопку «Создать маршрут» на главном экране.
+2. **Онбординг-анкета (5 шагов):** Заполните данные профиля (GPA, языковой сертификат, достижения и целевые страны) и нажмите «Перейти к дашборду».
+3. **Дашборд:** Нажмите кнопку «Анализ» для запуска первичной AI-диагностики.
+4. **AI-диагностика:** Проверьте анимированный расчет PTS-баллов (до 1000), Radar Chart и текстовый разбор слабых/сильных сторон.
+5. **Подбор вузов:** Изучите карточки рекомендованных программ в категориях `fit` (подходят) и `missed` (не хватает PTS).
+6. **Сравнение вузов:** Отметьте 2+ программы из списка и нажмите «Сравнить условия» для вывода аналитической матрицы (ROI, стоимость, визовые перспективы).
+7. **Roadmap:** Выберите целевой вуз и нажмите «Сгенерировать Roadmap» для получения пошагового плана действий по фазам с дедлайнами.
+
+### Как проверить реактивность (пересчёт маршрута)
+
+1. На дашборде разверните виджет «Редактировать анкету».
+2. Измените любой ключевой параметр (например, поднимите GPA с 3.5 до 3.9 или добавьте международное достижение).
+3. Обратите внимание на появившийся жёлтый баннер: **«Данные анкеты изменились с момента последнего сканирования»**.
+4. Нажмите «Обновить анализ сейчас»: значения PTS, оси Radar Chart, списки вузов и рекомендации моментально пересчитаются под обновленный профиль.
+   
+---
