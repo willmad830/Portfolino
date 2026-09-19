@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Loader2, Sparkles, Wand2 } from "lucide-react";
-import { useIsClient } from "@/lib/utils";
+import { ArrowLeft, Loader2, RefreshCw, Sparkles, Wand2, AlertCircle } from "lucide-react";
+import { cn, useIsClient } from "@/lib/utils";
 import { useOnboardingStore } from "@/lib/store/useOnboardingStore";
 import { isOnboardingComplete } from "@/lib/onboarding";
 import { buildDiagnosePayload } from "@/lib/diagnose/payload";
 import { isDiagnoseResult, type DiagnoseResult } from "@/lib/diagnose/types";
+import { useDiagnoseStore, isPayloadOutdated } from "@/lib/store/useDiagnoseStore";
 import AnketaWidget from "@/components/dashboard/AnketaWidget";
 import DiagnoseResults from "@/components/diagnose/DiagnoseResults";
 import RadarChart from "@/components/diagnose/RadarChart";
 import { TiltPanel } from "@/components/diagnose/TiltPanel";
 import OnboardingForm from "@/components/onboarding/OnboardingForm";
+import UniversityComparison from "@/components/compare/UniversityComparison";
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -136,12 +138,23 @@ function IdleSkeleton({
 export default function DashboardPage() {
   const isClient = useIsClient();
   const store = useOnboardingStore();
+  const diagnoseStore = useDiagnoseStore();
   const { rootRef, glowRef, ambientRef, contentRef } = useCursorPhysics();
 
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<DiagnoseResult | null>(null);
   const [runKey, setRunKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  const result = diagnoseStore.result;
+
+  const currentPayload = useMemo(() => {
+    return buildDiagnosePayload(store);
+  }, [store.name, store.academic, store.honors, store.preferences, store.context]);
+
+  const isStale = useMemo(() => {
+    if (!result || !diagnoseStore.lastAnalyzedPayload) return false;
+    return isPayloadOutdated(currentPayload, diagnoseStore.lastAnalyzedPayload);
+  }, [result, diagnoseStore.lastAnalyzedPayload, currentPayload]);
 
   if (!isClient) return null;
 
@@ -151,7 +164,6 @@ export default function DashboardPage() {
     if (running || !canAnalyze) return;
     setRunning(true);
     setError(null);
-    setResult(null);
     setRunKey((n) => n + 1);
 
     try {
@@ -168,8 +180,8 @@ export default function DashboardPage() {
       if (!isDiagnoseResult(data)) {
         throw new Error("Некорректный ответ анализа");
       }
-      const { _meta: _ignored, ...result } = data as DiagnoseResult & { _meta?: unknown };
-      setResult(result);
+      const { _meta: _ignored, ...cleanResult } = data as DiagnoseResult & { _meta?: unknown };
+      diagnoseStore.setDiagnoseResult(cleanResult, payload);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось выполнить анализ");
     } finally {
@@ -210,10 +222,20 @@ export default function DashboardPage() {
                 type="button"
                 onClick={runAnalyze}
                 disabled={running || !canAnalyze}
-                className="hidden items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-white/95 disabled:opacity-60 sm:inline-flex"
+                title={isStale ? "Данные анкеты изменились. Обновите анализ." : "Пересканировать профиль"}
+                className={cn(
+                  "hidden items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all sm:inline-flex",
+                  isStale
+                    ? "border border-amber-400/40 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20 shadow-[0_0_15px_rgba(251,191,36,0.2)]"
+                    : "bg-white text-zinc-900 hover:bg-white/95 disabled:opacity-60",
+                )}
               >
-                {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                Анализ
+                {running ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className={cn("h-4 w-4", isStale && "animate-spin-slow")} />
+                )}
+                <span>{isStale ? "Обновить анализ" : "Пересканировать профиль"}</span>
               </button>
             )}
             <Link
@@ -240,16 +262,24 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
           >
-            <span className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-accent">
-              <Sparkles className="h-3.5 w-3.5" /> Dashboard
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-accent">
+                <Sparkles className="h-3.5 w-3.5" /> Dashboard
+              </span>
+              {result && (
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[11px] text-white/50">
+                  История сохранена
+                </span>
+              )}
+            </div>
             <h1 className="mt-3 text-3xl font-semibold tracking-[-0.02em] text-white sm:text-4xl">
               {store.name.trim()
                 ? `Здравствуйте, ${store.name.trim()}`
                 : "Заполните анкету, чтобы построить маршрут"}
             </h1>
             <p className="mt-3 max-w-2xl text-pretty text-base leading-relaxed text-white/55">
-              Анкета хранится локально. AI-диагностика запускается только по кнопке «Анализ».
+              Результаты сканирования сохраняются локально. Если вы скорректируете данные анкеты,
+              воспользуйтесь кнопкой «Пересканировать профиль».
             </p>
           </motion.div>
 
@@ -261,6 +291,32 @@ export default function DashboardPage() {
           >
             <AnketaWidget />
           </motion.div>
+
+          {/* Stale questionnaire banner */}
+          {isStale && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200"
+            >
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="h-5 w-5 shrink-0 text-amber-300" />
+                <span>
+                  Данные анкеты изменились с момента последнего сканирования. Обновите анализ для
+                  актуализации PTS и подбора ВУЗов.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={runAnalyze}
+                disabled={running || !canAnalyze}
+                className="inline-flex items-center gap-2 rounded-full bg-amber-300 px-4 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-amber-200 disabled:opacity-50"
+              >
+                {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Обновить анализ сейчас
+              </button>
+            </motion.div>
+          )}
 
           {error && (
             <div className="mt-6 rounded-2xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">
@@ -284,15 +340,23 @@ export default function DashboardPage() {
                   transition={{ duration: 0.45 }}
                 >
                   <DiagnoseResults result={result} runKey={runKey} />
-                  <div className="mt-8 flex justify-center sm:hidden">
+
+                  {/* University Comparison Module */}
+                  <UniversityComparison
+                    universitiesFit={result.universities_fit}
+                    studentPayload={currentPayload}
+                    totalPts={result.calculated_scores.total_pts}
+                  />
+
+                  <div className="mt-12 flex justify-center">
                     <button
                       type="button"
                       onClick={runAnalyze}
                       disabled={running || !canAnalyze}
-                      className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-medium text-zinc-900 disabled:opacity-60"
+                      className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-white/[0.08] disabled:opacity-60"
                     >
-                      {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                      Повторить анализ
+                      {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                      Пересканировать профиль
                     </button>
                   </div>
                 </motion.div>
